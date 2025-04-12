@@ -1,18 +1,18 @@
-# gslm# gslm - Go Symlink Manager
+gslk - Go Symlink
 
-`gslm` is a simple command-line utility written in Go to manage symbolic links for configuration packages, often used for managing dotfiles. It allows you to link files and directories from a source location (containing your managed packages) to a target location (e.g., your home directory).
+`gslk` is a simple command-line utility written in Go to manage symbolic links for configuration packages, often used for managing dotfiles. It allows you to link files and directories from a source location (containing your managed packages) to a target location (e.g., your home directory).
 
 ## Features
 
 *   Links files from source package directories to a target directory.
 *   Unlinks previously created symlinks.
 *   Detects and prevents overwriting existing files/directories in the target location (unless they are the correct symlink).
-*   Supports ignoring specific files or patterns within packages via a `.gslm-ignore` file.
+*   Supports ignoring specific files or patterns within packages via a `.gslk-ignore` file.
 
 ## Usage
 
 ```bash
-gslm <action> -s <source_dir> -t <target_dir> <package1> [package2...]
+gslk <action> -s <source_dir> -t <target_dir> <package1> [package2...]
 ```
 
 **Actions:**
@@ -34,22 +34,22 @@ gslm <action> -s <source_dir> -t <target_dir> <package1> [package2...]
 To link the `zsh`, `vim`, and `git` configuration packages from a `./dotfiles` directory to your home directory (`$HOME`):
 
 ```bash
-gslm link -s ./dotfiles -t $HOME zsh vim git
+gslk link -s ./dotfiles -t $HOME zsh vim git
 ```
 
 To unlink the `vim` package:
 
 ```bash
-gslm unlink -s ./dotfiles -t $HOME vim
+gslk unlink -s ./dotfiles -t $HOME vim
 ```
 
 ## Packages
 
-`gslm` treats each subdirectory within the specified `<source_dir>` as a "package". When you run `gslm link`, it walks through the files and directories within each specified package directory in the source.
+`gslk` treats each subdirectory within the specified `<source_dir>` as a "package". When you run `gslk link`, it walks through the files and directories within each specified package directory in the source.
 
-## Ignoring Files (`.gslm-ignore`)
+## Ignoring Files (`.gslk-ignore`)
 
-You can prevent certain files or directories within a package from being linked by creating a `.gslm-ignore` file in the root of that package directory (e.g., `<source_dir>/<package_name>/.gslm-ignore`).
+You can prevent certain files or directories within a package from being linked by creating a `.gslk-ignore` file in the root of that package directory (e.g., `<source_dir>/<package_name>/.gslk-ignore`).
 
 This file works like a `.gitignore` file. Each line specifies a pattern:
 
@@ -57,7 +57,7 @@ This file works like a `.gitignore` file. Each line specifies a pattern:
 *   Blank lines are ignored.
 *   Other lines are treated as file patterns (using `filepath.Match` syntax) relative to the package directory.
 
-**Example `.gslm-ignore`:**
+**Example `.gslk-ignore`:**
 
 ```
 # Ignore secret files
@@ -76,16 +76,16 @@ Files and directories matching these patterns will be skipped during both `link`
 
 ## Building
 
-To build the `gslm` executable:
+To build the `gslk` executable:
 
 ```bash
-go build ./cmd/gslm
+go build ./cmd/gslk
 ```
 
 Alternatively, you can specify the output file and the main Go file directly:
 
 ```bash
-go build -o gslm cmd/gslm/main.go
+go build -o gslk cmd/gslk/main.go
 ```
 
-This will create the `gslm` binary in the current directory.
+This will create the `gslk` binary in the current directory.

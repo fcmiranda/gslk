@@ -12,7 +12,7 @@ import (
 // setupTestDirs creates temporary source and target directories for testing.
 // It returns the paths to the source dir, target dir, and a cleanup function.
 func setupTestDirs(t *testing.T) (sourceDir string, targetDir string, cleanup func()) {
-	tempDir, err := os.MkdirTemp("", "gslm_test_*")
+	tempDir, err := os.MkdirTemp("", "gslk_test_*")
 	require.NoError(t, err, "Failed to create temp dir")
 
 	sourceDir = filepath.Join(tempDir, "source")
@@ -279,11 +279,11 @@ func TestLinkWithIgnore(t *testing.T) {
 	err := os.Mkdir(pkgPath, 0755)
 	require.NoError(t, err)
 
-	// Create .gslm-ignore file
+	// Create .gslk-ignore file
 	ignoreContent := "ignored_file.txt\nignored_dir\n*.tmp\npattern/specific_file.dat\n"
-	ignoreFilePath := filepath.Join(pkgPath, ".gslm-ignore")
+	ignoreFilePath := filepath.Join(pkgPath, ".gslk-ignore")
 	err = os.WriteFile(ignoreFilePath, []byte(ignoreContent), 0644)
-	require.NoError(t, err, "Failed to create .gslm-ignore file")
+	require.NoError(t, err, "Failed to create .gslk-ignore file")
 
 	// Create package structure including ignored and non-ignored items
 	dummyStructure := map[string]string{
@@ -330,7 +330,7 @@ func TestLinkWithIgnore(t *testing.T) {
 
 	// Files/Dirs that SHOULD be ignored
 	shouldIgnore := []string{
-		".gslm-ignore", // The ignore file itself
+		".gslk-ignore", // The ignore file itself
 		"ignored_file.txt",
 		"ignored_dir/file.txt",
 		"ignored_dir/sub",
@@ -354,11 +354,11 @@ func TestUnlinkWithIgnore(t *testing.T) {
 	err := os.Mkdir(pkgPath, 0755)
 	require.NoError(t, err)
 
-	// Create .gslm-ignore file
+	// Create .gslk-ignore file
 	ignoreContent := "config/secrets.yml\nlogs\n"
-	ignoreFilePath := filepath.Join(pkgPath, ".gslm-ignore")
+	ignoreFilePath := filepath.Join(pkgPath, ".gslk-ignore")
 	err = os.WriteFile(ignoreFilePath, []byte(ignoreContent), 0644)
-	require.NoError(t, err, "Failed to create .gslm-ignore file")
+	require.NoError(t, err, "Failed to create .gslk-ignore file")
 
 	// Create package structure
 	dummyStructure := map[string]string{
@@ -406,7 +406,7 @@ func TestUnlinkWithIgnore(t *testing.T) {
 
 	// Files/Dirs that SHOULD have been ignored (and thus never existed in target)
 	shouldBeIgnored := []string{
-		".gslm-ignore",
+		".gslk-ignore",
 		"config/secrets.yml",
 		"logs/debug.log",
 		"logs/sub/trace.log",

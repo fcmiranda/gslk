@@ -86,10 +86,10 @@ func removeEmptyParents(targetPath string, baseDir string) {
 	}
 }
 
-// loadIgnorePatterns reads the .gslm-ignore file from the given package directory
+// loadIgnorePatterns reads the .gslk-ignore file from the given package directory
 // and returns a list of ignore patterns. Returns an empty list if the file doesn't exist.
 func loadIgnorePatterns(packagePath string) ([]string, error) {
-	ignoreFilePath := filepath.Join(packagePath, ".gslm-ignore")
+	ignoreFilePath := filepath.Join(packagePath, ".gslk-ignore")
 	file, err := os.Open(ignoreFilePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -152,7 +152,7 @@ func (l *Linker) Link(packageNames []string) error {
 			}
 
 			// Skip the root package directory itself and the ignore file
-			if sourcePath == pkg.Path || filepath.Base(sourcePath) == ".gslm-ignore" {
+			if sourcePath == pkg.Path || filepath.Base(sourcePath) == ".gslk-ignore" {
 				return nil
 			}
 
@@ -164,12 +164,25 @@ func (l *Linker) Link(packageNames []string) error {
 
 			// Check against ignore patterns
 			for _, pattern := range ignorePatterns {
+				// Check against the full relative path first
 				matched, matchErr := filepath.Match(pattern, relPath)
 				if matchErr != nil {
 					// Log or handle bad patterns? For now, let's report it.
-					fmt.Printf("Warning: Invalid pattern '%s' in .gslm-ignore for package %s: %v\n", pattern, name, matchErr)
+					fmt.Printf("Warning: Invalid pattern '%s' in .gslk-ignore for package %s: %v\n", pattern, name, matchErr)
 					continue // Skip this pattern
 				}
+
+				// If not matched and pattern doesn't contain a separator, try matching basename
+				if !matched && !strings.Contains(pattern, string(filepath.Separator)) {
+					baseName := filepath.Base(relPath)
+					matched, matchErr = filepath.Match(pattern, baseName)
+					if matchErr != nil {
+						// This shouldn't happen if the pattern was valid for the full path check
+						fmt.Printf("Warning: Error matching pattern '%s' against base name '%s': %v\n", pattern, baseName, matchErr)
+						continue
+					}
+				}
+
 				if matched {
 					fmt.Printf("Ignoring %s (matches pattern '%s')\n", relPath, pattern)
 					if d.IsDir() {
@@ -309,7 +322,7 @@ func (l *Linker) Unlink(packageNames []string) error {
 			}
 
 			// Skip the root package directory itself and the ignore file
-			if sourcePath == pkg.Path || filepath.Base(sourcePath) == ".gslm-ignore" {
+			if sourcePath == pkg.Path || filepath.Base(sourcePath) == ".gslk-ignore" {
 				return nil
 			}
 
@@ -320,11 +333,23 @@ func (l *Linker) Unlink(packageNames []string) error {
 
 			// Check against ignore patterns - if it *would* be ignored during linking, don't try to unlink it
 			for _, pattern := range ignorePatterns {
+				// Check against the full relative path first
 				matched, matchErr := filepath.Match(pattern, relPath)
 				if matchErr != nil {
-					fmt.Printf("Warning: Invalid pattern '%s' in .gslm-ignore for package %s during unlink: %v\n", pattern, name, matchErr)
+					fmt.Printf("Warning: Invalid pattern '%s' in .gslk-ignore for package %s during unlink: %v\n", pattern, name, matchErr)
 					continue
 				}
+
+				// If not matched and pattern doesn't contain a separator, try matching basename
+				if !matched && !strings.Contains(pattern, string(filepath.Separator)) {
+					baseName := filepath.Base(relPath)
+					matched, matchErr = filepath.Match(pattern, baseName)
+					if matchErr != nil {
+						fmt.Printf("Warning: Error matching pattern '%s' against base name '%s' during unlink: %v\n", pattern, baseName, matchErr)
+						continue
+					}
+				}
+
 				if matched {
 					// This path would have been ignored during linking, so don't process for unlinking
 					if d.IsDir() {
