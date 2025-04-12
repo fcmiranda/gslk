@@ -45,6 +45,47 @@ func (l *Linker) FindPackages() ([]Package, error) {
 	return packages, nil
 }
 
+// removeEmptyParents attempts to remove the parent directory of targetPath
+// and continues removing further empty parent directories upwards until
+// it hits the baseDir, a non-empty directory, or encounters an error.
+func removeEmptyParents(targetPath string, baseDir string) {
+	parentDir := filepath.Dir(targetPath)
+	// Ensure baseDir is absolute for reliable comparison
+	absBaseDir, err := filepath.Abs(baseDir)
+	if err != nil {
+		fmt.Printf("Warning: could not get absolute path for baseDir %s: %v\n", baseDir, err)
+		absBaseDir = baseDir // Proceed with potentially relative path
+	}
+
+	for {
+		absParentDir, err := filepath.Abs(parentDir)
+		if err != nil {
+			fmt.Printf("Warning: could not get absolute path for parentDir %s: %v\n", parentDir, err)
+			break // Cannot reliably compare, stop
+		}
+
+		// Stop conditions: reached base, root, or outside base
+		// Use filepath.Clean to handle trailing slashes etc.
+		if filepath.Clean(absParentDir) == filepath.Clean(absBaseDir) || absParentDir == "/" || absParentDir == "." || !strings.HasPrefix(absParentDir, absBaseDir) {
+			break
+		}
+
+		// Attempt to remove the directory
+		removeErr := os.Remove(parentDir)
+		if removeErr == nil {
+			fmt.Printf("Removed empty directory: %s\n", parentDir)
+			// Move up to the next parent
+			parentDir = filepath.Dir(parentDir)
+		} else {
+			// Stop if removal failed (likely not empty, or permissions error)
+			// A common error here will be *syscall.ENOTEMPTY.
+			// We could check os.IsNotExist(removeErr) - if it's already gone, maybe continue?
+			// But simpler to just break on any error indicating it couldn't be removed now.
+			break
+		}
+	}
+}
+
 // loadIgnorePatterns reads the .gslm-ignore file from the given package directory
 // and returns a list of ignore patterns. Returns an empty list if the file doesn't exist.
 func loadIgnorePatterns(packagePath string) ([]string, error) {
@@ -230,7 +271,8 @@ func (l *Linker) Link(packageNames []string) error {
 }
 
 // Unlink removes symbolic links for the specified packages from the TargetDir
-// that point back to the SourceDir.
+// that point back to the SourceDir. It also removes empty parent directories
+// created during linking.
 func (l *Linker) Unlink(packageNames []string) error {
 	allPackages, err := l.FindPackages()
 	if err != nil {
@@ -335,12 +377,16 @@ func (l *Linker) Unlink(packageNames []string) error {
 				if absLinkTarget == absSourcePath {
 					// This is the link we created, remove it
 					fmt.Printf("Unlinking: %s (link to %s)\n", targetPath, sourcePath)
-					if removeErr := os.Remove(targetPath); removeErr != nil {
+					removeErr := os.Remove(targetPath)
+					if removeErr != nil && !os.IsNotExist(removeErr) { // Ignore error if it was already gone
 						return fmt.Errorf("failed to remove symlink %s: %w", targetPath, removeErr)
 					}
-					// TODO: Optionally remove empty parent directories?
+					// Attempt to remove empty parent directories, starting from the parent of the removed link
+					// Do this even if os.Remove returned IsNotExist, as the parent might still be empty.
+					removeEmptyParents(targetPath, l.TargetDir)
 				} else {
-					// fmt.Printf("  Paths do not match! Cannot unlink.\n") // Debug else branch
+					// Symlink exists but points elsewhere, ignore it.
+					// fmt.Printf("Skipping unlink for %s: symlink points to %s, expected %s\n", targetPath, absLinkTarget, absSourcePath) // Debugging
 				}
 			}
 			// Else: Target exists but is not a symlink, ignore it.
