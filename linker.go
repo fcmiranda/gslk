@@ -18,6 +18,8 @@ type Package struct {
 type Linker struct {
 	SourceDir string
 	TargetDir string
+	Verbose   bool
+	DryRun    bool
 }
 
 // FindPackages discovers packages (subdirectories) within the source directory.
@@ -143,7 +145,10 @@ func (l *Linker) Link(packageNames []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to load ignore patterns for package %s: %w", name, err)
 		}
-		fmt.Printf("Loaded %d ignore patterns for package %s\n", len(ignorePatterns), name)
+
+		if l.Verbose {
+			fmt.Printf("Loaded %d ignore patterns for package %s\n", len(ignorePatterns), name)
+		}
 
 		err = filepath.WalkDir(pkg.Path, func(sourcePath string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil {
@@ -184,7 +189,9 @@ func (l *Linker) Link(packageNames []string) error {
 				}
 
 				if matched {
-					fmt.Printf("Ignoring %s (matches pattern '%s')\n", relPath, pattern)
+					if l.Verbose {
+						fmt.Printf("Ignoring %s (matches pattern '%s')\n", relPath, pattern)
+					}
 					if d.IsDir() {
 						return filepath.SkipDir // Skip the entire directory
 					}
@@ -197,25 +204,16 @@ func (l *Linker) Link(packageNames []string) error {
 			// If current item is a directory, ensure it exists in target and continue.
 			// Do not create symlinks *for* directories, only *within* them.
 			if d.IsDir() {
-				fmt.Printf("Ensuring directory exists: %s\n", targetPath)
-				if err := os.MkdirAll(targetPath, 0755); err != nil {
-					return fmt.Errorf("failed to create target directory %s: %w", targetPath, err)
+				if l.Verbose {
+					fmt.Printf("Ensuring directory exists: %s\n", targetPath)
+				}
+				if !l.DryRun {
+					if err := os.MkdirAll(targetPath, 0755); err != nil {
+						return fmt.Errorf("failed to create target directory %s: %w", targetPath, err)
+					}
 				}
 				return nil // Directory handled, continue walk
 			}
-
-			// --- Conflict Detection and Linking Logic (for Files) ---
-
-			// 1. Check if target exists (use os.Lstat to avoid following links)
-			// 2. If exists:
-			//    a. Check if it's a symlink pointing to sourcePath. If yes, it's okay.
-			//    b. Otherwise, it's a conflict. Return an error.
-			// 3. If not exists:
-			//    a. Ensure target parent directory exists (os.MkdirAll)
-			//    b. Create the symlink (os.Symlink)
-
-			// fmt.Printf("Processing: %s -> %s\n", sourcePath, targetPath) // Placeholder
-			// TODO: Implement the actual conflict detection and linking
 
 			targetFi, err := os.Lstat(targetPath)
 			if err == nil {
@@ -240,7 +238,9 @@ func (l *Linker) Link(packageNames []string) error {
 					}
 					if linkTarget == sourcePath || absLinkTarget == absSourcePath {
 						// Already correctly linked, skip
-						fmt.Printf("Skipping already linked: %s -> %s\n", sourcePath, targetPath)
+						if l.Verbose {
+							fmt.Printf("Skipping already linked: %s -> %s\n", sourcePath, targetPath)
+						}
 						return nil
 					}
 				}
@@ -254,6 +254,11 @@ func (l *Linker) Link(packageNames []string) error {
 			// Target does not exist, proceed with linking
 			fmt.Printf("Linking: %s -> %s\n", sourcePath, targetPath)
 
+			// In dry run mode, don't make actual changes
+			if l.DryRun {
+				return nil
+			}
+
 			// Ensure parent directory exists
 			targetDir := filepath.Dir(targetPath)
 			if err := os.MkdirAll(targetDir, 0755); err != nil {
@@ -261,8 +266,6 @@ func (l *Linker) Link(packageNames []string) error {
 			}
 
 			// Create the symbolic link
-			// Use relative path for the link source if possible, otherwise absolute
-			// For simplicity now, let's use the absolute source path
 			absSourcePath, absErr := filepath.Abs(sourcePath)
 			if absErr != nil {
 				return fmt.Errorf("failed to get absolute path for source %s: %w", sourcePath, absErr)
@@ -313,7 +316,10 @@ func (l *Linker) Unlink(packageNames []string) error {
 			// Let's return an error to be safe.
 			return fmt.Errorf("failed to load ignore patterns for package %s: %w", name, err)
 		}
-		fmt.Printf("Loaded %d ignore patterns for package %s for unlinking\n", len(ignorePatterns), name)
+
+		if l.Verbose {
+			fmt.Printf("Loaded %d ignore patterns for package %s for unlinking\n", len(ignorePatterns), name)
+		}
 
 		// We need to walk the source package dir to know what links *should* exist
 		err = filepath.WalkDir(pkg.Path, func(sourcePath string, d os.DirEntry, walkErr error) error {
@@ -352,6 +358,9 @@ func (l *Linker) Unlink(packageNames []string) error {
 
 				if matched {
 					// This path would have been ignored during linking, so don't process for unlinking
+					if l.Verbose {
+						fmt.Printf("Ignoring %s during unlink (matches pattern '%s')\n", relPath, pattern)
+					}
 					if d.IsDir() {
 						return filepath.SkipDir
 					}
@@ -360,16 +369,6 @@ func (l *Linker) Unlink(packageNames []string) error {
 			}
 
 			targetPath := filepath.Join(l.TargetDir, relPath)
-
-			// --- Unlinking Logic ---
-
-			// 1. Check if target exists (os.Lstat)
-			// 2. If exists:
-			//    a. Check if it's a symlink.
-			//    b. If yes, check if it points to the expected sourcePath.
-			//    c. If yes, remove the symlink (os.Remove).
-			//    d. Otherwise (not a symlink, or points elsewhere), ignore it.
-			// 3. If not exists, ignore it.
 
 			targetFi, err := os.Lstat(targetPath)
 			if err != nil {
@@ -402,19 +401,29 @@ func (l *Linker) Unlink(packageNames []string) error {
 				if absLinkTarget == absSourcePath {
 					// This is the link we created, remove it
 					fmt.Printf("Unlinking: %s (link to %s)\n", targetPath, sourcePath)
+
+					// In dry run mode, don't make actual changes
+					if l.DryRun {
+						return nil
+					}
+
 					removeErr := os.Remove(targetPath)
 					if removeErr != nil && !os.IsNotExist(removeErr) { // Ignore error if it was already gone
 						return fmt.Errorf("failed to remove symlink %s: %w", targetPath, removeErr)
 					}
+
 					// Attempt to remove empty parent directories, starting from the parent of the removed link
-					// Do this even if os.Remove returned IsNotExist, as the parent might still be empty.
-					removeEmptyParents(targetPath, l.TargetDir)
-				} else {
+					if !l.DryRun {
+						removeEmptyParents(targetPath, l.TargetDir)
+					}
+				} else if l.Verbose {
 					// Symlink exists but points elsewhere, ignore it.
-					// fmt.Printf("Skipping unlink for %s: symlink points to %s, expected %s\n", targetPath, absLinkTarget, absSourcePath) // Debugging
+					fmt.Printf("Skipping unlink for %s: symlink points to %s, expected %s\n", targetPath, absLinkTarget, absSourcePath)
 				}
+			} else if l.Verbose {
+				// Target exists but is not a symlink, ignore it.
+				fmt.Printf("Skipping unlink for %s: not a symlink\n", targetPath)
 			}
-			// Else: Target exists but is not a symlink, ignore it.
 
 			return nil // Continue walking
 		})
@@ -430,6 +439,10 @@ func (l *Linker) Unlink(packageNames []string) error {
 // Stow performs the default behavior for managing symbolic links.
 // It combines linking and unlinking logic as needed.
 func (l *Linker) Stow(packageNames []string) error {
+	if l.Verbose {
+		fmt.Printf("Stowing packages: %v\n", packageNames)
+	}
+
 	// For simplicity, let's assume stow behaves like link for now.
 	// You can customize this logic to include additional behaviors.
 	return l.Link(packageNames)

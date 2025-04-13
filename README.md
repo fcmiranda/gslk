@@ -12,35 +12,64 @@ gslk - Go Symlink
 ## Usage
 
 ```bash
-gslk <action> -s <source_dir> -t <target_dir> <package1> [package2...]
+gslk [options] <package1> [package2...]
 ```
 
-**Actions:**
+**Actions (Options):**
 
-*   `link`: Creates symlinks in the `<target_dir>` for the specified packages found in `<source_dir>`.
-*   `unlink`: Removes symlinks from the `<target_dir>` that correspond to the specified packages found in `<source_dir>`.
+*   Default action is to link packages.
+*   `-D`: Unlink/delete packages instead of linking.
+*   `-GL` or `--gslk`: Explicitly specify linking packages (default action).
+*   `-R`: Relink packages (unlink then link).
 
-**Options:**
+**Required Options:**
 
-*   `-s`: (Required) The source directory containing your configuration packages (subdirectories).
-*   `-t`: (Required) The target directory where the symlinks should be created or removed.
+*   `-s` or `--source`: The source directory containing your configuration packages (subdirectories).
+*   `-t` or `--target`: The target directory where the symlinks should be created or removed.
+
+**Additional Options:**
+
+*   `-n`: Dry run: show what would be done without actually doing it.
+*   `-v`: Increase verbosity.
 
 **Arguments:**
 
 *   `<package1> [package2...]`: One or more names of the package subdirectories within `<source_dir>` to process.
 
-**Example:**
+**Examples:**
 
 To link the `zsh`, `vim`, and `git` configuration packages from a `./dotfiles` directory to your home directory (`$HOME`):
 
 ```bash
-gslk link -s ./dotfiles -t $HOME zsh vim git
+gslk -s ./dotfiles -t $HOME zsh vim git
+```
+
+To explicitly link packages (same as above):
+```bash
+gslk -GL -s ./dotfiles -t $HOME zsh vim git
+```
+
+Or using the long-form flag:
+```bash
+gslk --gslk -s ./dotfiles -t $HOME zsh vim git
 ```
 
 To unlink the `vim` package:
 
 ```bash
-gslk unlink -s ./dotfiles -t $HOME vim
+gslk -D -s ./dotfiles -t $HOME vim
+```
+
+To relink (unlink then link) the `vim` package verbosely:
+
+```bash
+gslk -R -v -s ./dotfiles -t $HOME vim
+```
+
+To perform a dry run showing what would happen without making changes:
+
+```bash
+gslk -n -s ./dotfiles -t $HOME zsh vim git
 ```
 
 ## Packages
