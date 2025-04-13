@@ -1,4 +1,4 @@
-module glsm
+module gslk
 
 go 1.24.0
 

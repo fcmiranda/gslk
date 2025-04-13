@@ -1,4 +1,4 @@
-package glsm
+package gslk
 
 import (
 	"bufio"
@@ -425,4 +425,12 @@ func (l *Linker) Unlink(packageNames []string) error {
 	}
 
 	return nil // Success
+}
+
+// Stow performs the default behavior for managing symbolic links.
+// It combines linking and unlinking logic as needed.
+func (l *Linker) Stow(packageNames []string) error {
+	// For simplicity, let's assume stow behaves like link for now.
+	// You can customize this logic to include additional behaviors.
+	return l.Link(packageNames)
 }

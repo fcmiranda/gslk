@@ -1,4 +1,4 @@
-package glsm
+package gslk
 
 import (
 	"os"
