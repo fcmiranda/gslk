@@ -6,7 +6,7 @@ import (
 	"gslk"
 	"os"
 	"path/filepath"
-	// Removed "strings" import as it's no longer needed for action parsing
+	"strings" // Re-added "strings" import for flag misinterpretation check
 )
 
 // --- Global Variables for Flags ---
@@ -64,6 +64,16 @@ func main() {
 	}
 
 	packageNames := flag.Args() // Get remaining non-flag args (package names)
+
+	// Check for misinterpreted flags in packageNames
+	for _, name := range packageNames {
+		if strings.HasPrefix(name, "-") {
+			fmt.Fprintf(os.Stderr, "Error: '%s' looks like a flag but was interpreted as a package name.\n", name)
+			fmt.Fprintf(os.Stderr, "All flags must come before package names. Try rearranging your command.\n")
+			fmt.Fprintf(os.Stderr, "Example: %s -D -f -s ./source -t ./target packageName\n", filepath.Base(os.Args[0]))
+			os.Exit(1)
+		}
+	}
 
 	// --- Flag Validation ---
 	actionFlagsSet := 0

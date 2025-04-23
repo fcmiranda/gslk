@@ -15,6 +15,8 @@ gslk - Go Symlink
 gslk [options] <package1> [package2...]
 ```
 
+**Note:** All option flags must come before package names.
+
 **Actions (Options):**
 
 *   Default action is to link packages.
@@ -65,6 +67,11 @@ To unlink the `vim` package:
 
 ```bash
 gslk -D -s ./dotfiles vim
+```
+
+To force remove parent directories when unlinking:
+```bash
+gslk -D -f -s ./dotfiles vim
 ```
 
 To relink (unlink then link) the `vim` package verbosely:
