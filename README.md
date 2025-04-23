@@ -31,6 +31,7 @@ gslk [options] <package1> [package2...]
 *   `-t` or `--target`: The target directory where the symlinks should be created or removed (default: `$HOME`).
 *   `-n`: Dry run: show what would be done without actually doing it.
 *   `-v`: Increase verbosity.
+*   `-f` or `--force`: Force remove parent directories during unlink, even if they're not empty.
 
 **Arguments:**
 

@@ -12,17 +12,19 @@ import (
 // --- Global Variables for Flags ---
 // Use package-level vars for flags defined outside main
 var (
-	sourceDir   = flag.String("s", "", "Source `directory` containing packages (default: current directory). Can also use --source.")
-	targetDir   = flag.String("t", os.Getenv("HOME"), "Target `directory` for symlinks (default: $HOME). Can also use --target.")
-	deleteFlag  = flag.Bool("D", false, "Delete/unlink packages instead of linking. Cannot be used with -GL, --gslk or -R.")
-	linkFlag    = flag.Bool("GL", false, "Link packages (default action). Cannot be used with -D or -R. Alias: --gslk.") // Changed -S to -GL
-	gslkFlag    = flag.Bool("gslk", false, "Alias for -GL (Link packages). Cannot be used with -D or -R.")               // Added --gslk flag as alias
-	relinkFlag  = flag.Bool("R", false, "Relink packages (unlink then link). Cannot be used with -D, -GL or --gslk.")
-	noopFlag    = flag.Bool("n", false, "Dry run: show what would be done without actually doing it.")
-	verboseFlag = flag.Bool("v", false, "Increase verbosity.")
+	sourceDir       = flag.String("s", "", "Source `directory` containing packages (default: current directory). Can also use --source.")
+	targetDir       = flag.String("t", os.Getenv("HOME"), "Target `directory` for symlinks (default: $HOME). Can also use --target.")
+	deleteFlag      = flag.Bool("D", false, "Delete/unlink packages instead of linking. Cannot be used with -GL, --gslk or -R.")
+	linkFlag        = flag.Bool("GL", false, "Link packages (default action). Cannot be used with -D or -R. Alias: --gslk.") // Changed -S to -GL
+	gslkFlag        = flag.Bool("gslk", false, "Alias for -GL (Link packages). Cannot be used with -D or -R.")               // Added --gslk flag as alias
+	relinkFlag      = flag.Bool("R", false, "Relink packages (unlink then link). Cannot be used with -D, -GL or --gslk.")
+	noopFlag        = flag.Bool("n", false, "Dry run: show what would be done without actually doing it.")
+	verboseFlag     = flag.Bool("v", false, "Increase verbosity.")
+	forceRemoveFlag = flag.Bool("f", false, "Force remove parent directories during unlink, even if not empty.")
 	// Add long aliases for source and target
 	_ = flag.String("source", "", "Alias for -s.") // We capture the value with -s
 	_ = flag.String("target", "", "Alias for -t.") // We capture the value with -t
+	_ = flag.Bool("force", false, "Alias for -f.")
 )
 
 // Custom usage message
@@ -133,10 +135,11 @@ func main() {
 	// --- Initialize Linker ---
 	// No longer passing gslkFlag as it's just an alias for link
 	linker := &gslk.Linker{
-		SourceDir: absSource,
-		TargetDir: absTarget,
-		Verbose:   *verboseFlag, // Assuming Linker has Verbose field
-		DryRun:    *noopFlag,    // Assuming Linker has DryRun field
+		SourceDir:   absSource,
+		TargetDir:   absTarget,
+		Verbose:     *verboseFlag,     // Assuming Linker has Verbose field
+		DryRun:      *noopFlag,        // Assuming Linker has DryRun field
+		ForceRemove: *forceRemoveFlag, // Add the ForceRemove field
 	}
 
 	// ... rest of main function remains the same ...

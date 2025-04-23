@@ -16,10 +16,11 @@ type Package struct {
 
 // Linker manages the process of linking and unlinking packages.
 type Linker struct {
-	SourceDir string
-	TargetDir string
-	Verbose   bool
-	DryRun    bool
+	SourceDir   string
+	TargetDir   string
+	Verbose     bool
+	DryRun      bool
+	ForceRemove bool // If true, force-remove parent directories even if not empty
 }
 
 // FindPackages discovers packages (subdirectories) within the source directory.
@@ -47,10 +48,11 @@ func (l *Linker) FindPackages() ([]Package, error) {
 	return packages, nil
 }
 
-// removeEmptyParents attempts to remove the parent directory of targetPath
-// and continues removing further empty parent directories upwards until
-// it hits the baseDir, a non-empty directory, or encounters an error.
-func removeEmptyParents(targetPath string, baseDir string) {
+// removeParents attempts to remove the parent directory of targetPath
+// and continues removing parent directories upwards until
+// it hits the baseDir, root, or outside base.
+// If force is true, directories will be removed even if they're not empty.
+func removeParents(targetPath string, baseDir string, force bool) {
 	parentDir := filepath.Dir(targetPath)
 	// Ensure baseDir is absolute for reliable comparison
 	absBaseDir, err := filepath.Abs(baseDir)
@@ -73,16 +75,27 @@ func removeEmptyParents(targetPath string, baseDir string) {
 		}
 
 		// Attempt to remove the directory
-		removeErr := os.Remove(parentDir)
+		var removeErr error
+		if force {
+			// Force remove the directory and all its contents
+			removeErr = os.RemoveAll(parentDir)
+		} else {
+			// Only remove if empty (default behavior)
+			removeErr = os.Remove(parentDir)
+		}
+
 		if removeErr == nil {
-			fmt.Printf("Removed empty directory: %s\n", parentDir)
+			fmt.Printf("Removed directory: %s\n", parentDir)
 			// Move up to the next parent
 			parentDir = filepath.Dir(parentDir)
 		} else {
-			// Stop if removal failed (likely not empty, or permissions error)
-			// A common error here will be *syscall.ENOTEMPTY.
-			// We could check os.IsNotExist(removeErr) - if it's already gone, maybe continue?
-			// But simpler to just break on any error indicating it couldn't be removed now.
+			// Log the failure reason if verbose
+			if force {
+				fmt.Printf("Failed to force-remove directory %s: %v\n", parentDir, removeErr)
+			} else {
+				// Likely not empty, which is expected behavior
+				fmt.Printf("Skipped non-empty directory: %s\n", parentDir)
+			}
 			break
 		}
 	}
@@ -414,7 +427,7 @@ func (l *Linker) Unlink(packageNames []string) error {
 
 					// Attempt to remove empty parent directories, starting from the parent of the removed link
 					if !l.DryRun {
-						removeEmptyParents(targetPath, l.TargetDir)
+						removeParents(targetPath, l.TargetDir, l.ForceRemove)
 					}
 				} else if l.Verbose {
 					// Symlink exists but points elsewhere, ignore it.
@@ -434,16 +447,4 @@ func (l *Linker) Unlink(packageNames []string) error {
 	}
 
 	return nil // Success
-}
-
-// Stow performs the default behavior for managing symbolic links.
-// It combines linking and unlinking logic as needed.
-func (l *Linker) Stow(packageNames []string) error {
-	if l.Verbose {
-		fmt.Printf("Stowing packages: %v\n", packageNames)
-	}
-
-	// For simplicity, let's assume stow behaves like link for now.
-	// You can customize this logic to include additional behaviors.
-	return l.Link(packageNames)
 }
