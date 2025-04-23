@@ -12,8 +12,8 @@ import (
 // --- Global Variables for Flags ---
 // Use package-level vars for flags defined outside main
 var (
-	sourceDir   = flag.String("s", "", "Source `directory` containing packages (required). Can also use --source.")
-	targetDir   = flag.String("t", "", "Target `directory` for symlinks (required). Can also use --target.")
+	sourceDir   = flag.String("s", "", "Source `directory` containing packages (default: current directory). Can also use --source.")
+	targetDir   = flag.String("t", os.Getenv("HOME"), "Target `directory` for symlinks (default: $HOME). Can also use --target.")
 	deleteFlag  = flag.Bool("D", false, "Delete/unlink packages instead of linking. Cannot be used with -GL, --gslk or -R.")
 	linkFlag    = flag.Bool("GL", false, "Link packages (default action). Cannot be used with -D or -R. Alias: --gslk.") // Changed -S to -GL
 	gslkFlag    = flag.Bool("gslk", false, "Alias for -GL (Link packages). Cannot be used with -D or -R.")               // Added --gslk flag as alias
@@ -43,8 +43,23 @@ func printUsage() {
 // ...existing code...
 
 func main() {
+	// Set default source directory to current directory if not specified
 	flag.Usage = printUsage // Set custom usage function
-	flag.Parse()            // Parse all flags defined globally
+
+	// Get the current directory before parsing flags
+	currentDir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not determine current directory: %v\n", err)
+		// Continue with empty default
+	}
+
+	// Parse all flags after setting up defaults
+	flag.Parse()
+
+	// If source dir wasn't specified, use current directory
+	if *sourceDir == "" {
+		*sourceDir = currentDir
+	}
 
 	packageNames := flag.Args() // Get remaining non-flag args (package names)
 
@@ -84,12 +99,6 @@ func main() {
 
 	if distinctActions > 1 {
 		fmt.Fprintln(os.Stderr, "Error: Only one action type (-D, [-GL|--gslk], -R) can be specified.") // Updated error message
-		printUsage()
-		os.Exit(1)
-	}
-
-	if *sourceDir == "" || *targetDir == "" {
-		fmt.Fprintln(os.Stderr, "\nError: -s (--source) and -t (--target) flags are required.")
 		printUsage()
 		os.Exit(1)
 	}

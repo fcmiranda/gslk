@@ -25,10 +25,10 @@ gslk [options] <package1> [package2...]
 **Required Options:**
 
 *   `-s` or `--source`: The source directory containing your configuration packages (subdirectories).
-*   `-t` or `--target`: The target directory where the symlinks should be created or removed.
 
 **Additional Options:**
 
+*   `-t` or `--target`: The target directory where the symlinks should be created or removed (default: `$HOME`).
 *   `-n`: Dry run: show what would be done without actually doing it.
 *   `-v`: Increase verbosity.
 
@@ -41,35 +41,41 @@ gslk [options] <package1> [package2...]
 To link the `zsh`, `vim`, and `git` configuration packages from a `./dotfiles` directory to your home directory (`$HOME`):
 
 ```bash
-gslk -s ./dotfiles -t $HOME zsh vim git
+gslk -s ./dotfiles zsh vim git
 ```
 
-To explicitly link packages (same as above):
+The above command uses the default target directory (`$HOME`). To specify a different target directory:
+
 ```bash
-gslk -GL -s ./dotfiles -t $HOME zsh vim git
+gslk -s ./dotfiles -t /path/to/target zsh vim git
+```
+
+To explicitly link packages:
+```bash
+gslk -GL -s ./dotfiles zsh vim git
 ```
 
 Or using the long-form flag:
 ```bash
-gslk --gslk -s ./dotfiles -t $HOME zsh vim git
+gslk --gslk -s ./dotfiles zsh vim git
 ```
 
 To unlink the `vim` package:
 
 ```bash
-gslk -D -s ./dotfiles -t $HOME vim
+gslk -D -s ./dotfiles vim
 ```
 
 To relink (unlink then link) the `vim` package verbosely:
 
 ```bash
-gslk -R -v -s ./dotfiles -t $HOME vim
+gslk -R -v -s ./dotfiles vim
 ```
 
 To perform a dry run showing what would happen without making changes:
 
 ```bash
-gslk -n -s ./dotfiles -t $HOME zsh vim git
+gslk -n -s ./dotfiles zsh vim git
 ```
 
 ## Packages
