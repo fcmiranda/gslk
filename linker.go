@@ -16,11 +16,10 @@ type Package struct {
 
 // Linker manages the process of linking and unlinking packages.
 type Linker struct {
-	SourceDir       string
-	TargetDir       string
-	Verbose         bool
-	DryRun          bool
-	RemoveTargetDir bool // When true, removes the target directory completely when unlinking
+	SourceDir string
+	TargetDir string
+	Verbose   bool
+	DryRun    bool
 }
 
 // FindPackages discovers packages (subdirectories) within the source directory.
@@ -310,15 +309,6 @@ func (l *Linker) Unlink(packageNames []string) error {
 			return fmt.Errorf("package '%s' not found in source directory %s, cannot determine links to remove", name, l.SourceDir)
 		}
 
-		// If RemoveTargetDir is true, just remove the entire target directory for this package
-		if l.RemoveTargetDir {
-			if err := l.removeTargetDirectory(name); err != nil {
-				return fmt.Errorf("failed to remove target directory for package %s: %w", name, err)
-			}
-			// Continue to the next package since we've removed the entire target directory
-			continue
-		}
-
 		// Load ignore patterns for this package
 		ignorePatterns, err := loadIgnorePatterns(pkg.Path)
 		if err != nil {
@@ -444,42 +434,6 @@ func (l *Linker) Unlink(packageNames []string) error {
 	}
 
 	return nil // Success
-}
-
-// removeTargetDirectory completely removes a target directory for a package.
-// This is used when the RemoveTargetDir option is set.
-func (l *Linker) removeTargetDirectory(pkgName string) error {
-	// Determine the target directory for this package
-	targetPkgDir := filepath.Join(l.TargetDir, pkgName)
-
-	// Check if the directory exists
-	if _, err := os.Stat(targetPkgDir); err != nil {
-		if os.IsNotExist(err) {
-			// Target directory doesn't exist, nothing to remove
-			if l.Verbose {
-				fmt.Printf("Target directory %s doesn't exist, nothing to remove\n", targetPkgDir)
-			}
-			return nil
-		}
-		return fmt.Errorf("failed to check target directory %s: %w", targetPkgDir, err)
-	}
-
-	if l.Verbose {
-		fmt.Printf("Removing target directory: %s\n", targetPkgDir)
-	}
-
-	// In dry run mode, don't make actual changes
-	if l.DryRun {
-		return nil
-	}
-
-	// Remove the target directory
-	if err := os.RemoveAll(targetPkgDir); err != nil {
-		return fmt.Errorf("failed to remove target directory %s: %w", targetPkgDir, err)
-	}
-
-	fmt.Printf("Removed target directory: %s\n", targetPkgDir)
-	return nil
 }
 
 // Stow performs the default behavior for managing symbolic links.
