@@ -23,6 +23,13 @@ type Linker struct {
 	ForceRemove bool // If true, force-remove parent directories even if not empty
 }
 
+// logVerbose logs a message if verbose mode is enabled
+func (l *Linker) logVerbose(format string, args ...interface{}) {
+	if l.Verbose {
+		fmt.Printf(format, args...)
+	}
+}
+
 // FindPackages discovers packages (subdirectories) within the source directory.
 func (l *Linker) FindPackages() ([]Package, error) {
 	entries, err := os.ReadDir(l.SourceDir)
@@ -34,7 +41,6 @@ func (l *Linker) FindPackages() ([]Package, error) {
 	for _, entry := range entries {
 		if entry.IsDir() {
 			// Assuming every directory directly under SourceDir is a package
-			// We might add more validation later (e.g., checking for specific files)
 			packageName := entry.Name()
 			packagePath := filepath.Join(l.SourceDir, packageName)
 			packages = append(packages, Package{Name: packageName, Path: packagePath})
@@ -46,6 +52,65 @@ func (l *Linker) FindPackages() ([]Package, error) {
 	}
 
 	return packages, nil
+}
+
+// loadIgnorePatterns reads the .gslk-ignore file from the given package directory
+// and returns a list of ignore patterns. Returns an empty list if the file doesn't exist.
+func loadIgnorePatterns(packagePath string) ([]string, error) {
+	ignoreFilePath := filepath.Join(packagePath, ".gslk-ignore")
+	file, err := os.Open(ignoreFilePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{}, nil // No ignore file, return empty list
+		}
+		return nil, fmt.Errorf("failed to open ignore file %s: %w", ignoreFilePath, err)
+	}
+	defer file.Close()
+
+	var patterns []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		// Ignore empty lines and comments
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		patterns = append(patterns, line)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading ignore file %s: %w", ignoreFilePath, err)
+	}
+
+	return patterns, nil
+}
+
+// isPathIgnored checks if a path should be ignored based on the provided patterns
+func isPathIgnored(relPath string, ignorePatterns []string) bool {
+	for _, pattern := range ignorePatterns {
+		// Check against the full relative path first
+		matched, matchErr := filepath.Match(pattern, relPath)
+		if matchErr != nil {
+			// Log or handle bad patterns
+			fmt.Printf("Warning: Invalid pattern '%s': %v\n", pattern, matchErr)
+			continue
+		}
+
+		// If not matched and pattern doesn't contain a separator, try matching basename
+		if !matched && !strings.Contains(pattern, string(filepath.Separator)) {
+			baseName := filepath.Base(relPath)
+			matched, matchErr = filepath.Match(pattern, baseName)
+			if matchErr != nil {
+				fmt.Printf("Warning: Error matching pattern '%s' against base name '%s': %v\n", pattern, baseName, matchErr)
+				continue
+			}
+		}
+
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 // removeParents attempts to remove the parent directory of targetPath
@@ -101,35 +166,114 @@ func removeParents(targetPath string, baseDir string, force bool) {
 	}
 }
 
-// loadIgnorePatterns reads the .gslk-ignore file from the given package directory
-// and returns a list of ignore patterns. Returns an empty list if the file doesn't exist.
-func loadIgnorePatterns(packagePath string) ([]string, error) {
-	ignoreFilePath := filepath.Join(packagePath, ".gslk-ignore")
-	file, err := os.Open(ignoreFilePath)
+// processPackagePaths walks the package directory and returns a list of file paths to process
+// along with their corresponding target paths and relative paths
+type pathInfo struct {
+	sourcePath string
+	targetPath string
+	relPath    string
+	isDir      bool
+}
+
+func (l *Linker) processPackagePaths(pkg Package, ignorePatterns []string) ([]pathInfo, error) {
+	var paths []pathInfo
+
+	err := filepath.WalkDir(pkg.Path, func(sourcePath string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("error accessing %s: %w", sourcePath, walkErr)
+		}
+
+		// Skip the root package directory itself and the ignore file
+		if sourcePath == pkg.Path || filepath.Base(sourcePath) == ".gslk-ignore" {
+			return nil
+		}
+
+		relPath, err := filepath.Rel(pkg.Path, sourcePath)
+		if err != nil {
+			return fmt.Errorf("failed to get relative path for %s: %w", sourcePath, err)
+		}
+
+		// Check against ignore patterns
+		if isPathIgnored(relPath, ignorePatterns) {
+			l.logVerbose("Ignoring %s (matches ignore pattern)\n", relPath)
+			if d.IsDir() {
+				return filepath.SkipDir // Skip the entire directory
+			}
+			return nil // Skip this file
+		}
+
+		targetPath := filepath.Join(l.TargetDir, relPath)
+
+		paths = append(paths, pathInfo{
+			sourcePath: sourcePath,
+			targetPath: targetPath,
+			relPath:    relPath,
+			isDir:      d.IsDir(),
+		})
+
+		return nil
+	})
+
+	return paths, err
+}
+
+// ensureDirectory creates a directory if it doesn't exist
+func (l *Linker) ensureDirectory(path string) error {
+	if l.DryRun {
+		l.logVerbose("DRY RUN: Would create directory: %s\n", path)
+		return nil
+	}
+
+	l.logVerbose("Ensuring directory exists: %s\n", path)
+	return os.MkdirAll(path, 0755)
+}
+
+// createSymlink creates a symbolic link from target to source
+func (l *Linker) createSymlink(sourcePath, targetPath string) error {
+	fmt.Printf("Linking: %s -> %s\n", sourcePath, targetPath)
+
+	if l.DryRun {
+		return nil
+	}
+
+	// Ensure parent directory exists
+	targetDir := filepath.Dir(targetPath)
+	if err := l.ensureDirectory(targetDir); err != nil {
+		return fmt.Errorf("failed to create target directory %s: %w", targetDir, err)
+	}
+
+	// Create the symbolic link with absolute path
+	absSourcePath, absErr := filepath.Abs(sourcePath)
+	if absErr != nil {
+		return fmt.Errorf("failed to get absolute path for source %s: %w", sourcePath, absErr)
+	}
+
+	return os.Symlink(absSourcePath, targetPath)
+}
+
+// isCorrectSymlink checks if a symlink at targetPath correctly points to sourcePath
+func isCorrectSymlink(targetPath, sourcePath string) (bool, error) {
+	linkTarget, err := os.Readlink(targetPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []string{}, nil // No ignore file, return empty list
+		return false, fmt.Errorf("failed to read symlink %s: %w", targetPath, err)
+	}
+
+	// Compare absolute paths for robustness
+	absSourcePath, err := filepath.Abs(sourcePath)
+	if err != nil {
+		return false, fmt.Errorf("failed to get absolute path for source %s: %w", sourcePath, err)
+	}
+
+	absLinkTarget, err := filepath.Abs(filepath.Join(filepath.Dir(targetPath), linkTarget))
+	if err != nil {
+		// Try absolute if linkTarget itself was absolute
+		absLinkTarget, err = filepath.Abs(linkTarget)
+		if err != nil {
+			return false, fmt.Errorf("failed to get absolute path for link target %s: %w", linkTarget, err)
 		}
-		return nil, fmt.Errorf("failed to open ignore file %s: %w", ignoreFilePath, err)
-	}
-	defer file.Close()
-
-	var patterns []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		// Ignore empty lines and comments
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		patterns = append(patterns, line)
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading ignore file %s: %w", ignoreFilePath, err)
-	}
-
-	return patterns, nil
+	return linkTarget == sourcePath || absLinkTarget == absSourcePath, nil
 }
 
 // Link creates symbolic links for the specified packages from SourceDir to TargetDir.
@@ -148,8 +292,6 @@ func (l *Linker) Link(packageNames []string) error {
 	for _, name := range packageNames {
 		pkg, ok := packagesToLink[name]
 		if !ok {
-			// Option: return error, log warning, or skip?
-			// Let's return an error for now.
 			return fmt.Errorf("package '%s' not found in source directory %s", name, l.SourceDir)
 		}
 
@@ -159,144 +301,55 @@ func (l *Linker) Link(packageNames []string) error {
 			return fmt.Errorf("failed to load ignore patterns for package %s: %w", name, err)
 		}
 
-		if l.Verbose {
-			fmt.Printf("Loaded %d ignore patterns for package %s\n", len(ignorePatterns), name)
+		l.logVerbose("Loaded %d ignore patterns for package %s\n", len(ignorePatterns), name)
+
+		// Process all paths in the package
+		paths, err := l.processPackagePaths(pkg, ignorePatterns)
+		if err != nil {
+			return fmt.Errorf("failed to process paths for package %s: %w", name, err)
 		}
 
-		err = filepath.WalkDir(pkg.Path, func(sourcePath string, d os.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				// Error accessing the file/directory during walk
-				return fmt.Errorf("error accessing %s: %w", sourcePath, walkErr)
+		// Handle each path
+		for _, path := range paths {
+			if path.isDir {
+				// For directories, just ensure they exist in target
+				if err := l.ensureDirectory(path.targetPath); err != nil {
+					return fmt.Errorf("failed to create target directory %s: %w", path.targetPath, err)
+				}
+				continue
 			}
 
-			// Skip the root package directory itself and the ignore file
-			if sourcePath == pkg.Path || filepath.Base(sourcePath) == ".gslk-ignore" {
-				return nil
-			}
-
-			relPath, err := filepath.Rel(pkg.Path, sourcePath)
-			if err != nil {
-				// Should generally not happen if sourcePath is within pkg.Path
-				return fmt.Errorf("failed to get relative path for %s: %w", sourcePath, err)
-			}
-
-			// Check against ignore patterns
-			for _, pattern := range ignorePatterns {
-				// Check against the full relative path first
-				matched, matchErr := filepath.Match(pattern, relPath)
-				if matchErr != nil {
-					// Log or handle bad patterns? For now, let's report it.
-					fmt.Printf("Warning: Invalid pattern '%s' in .gslk-ignore for package %s: %v\n", pattern, name, matchErr)
-					continue // Skip this pattern
-				}
-
-				// If not matched and pattern doesn't contain a separator, try matching basename
-				if !matched && !strings.Contains(pattern, string(filepath.Separator)) {
-					baseName := filepath.Base(relPath)
-					matched, matchErr = filepath.Match(pattern, baseName)
-					if matchErr != nil {
-						// This shouldn't happen if the pattern was valid for the full path check
-						fmt.Printf("Warning: Error matching pattern '%s' against base name '%s': %v\n", pattern, baseName, matchErr)
-						continue
-					}
-				}
-
-				if matched {
-					if l.Verbose {
-						fmt.Printf("Ignoring %s (matches pattern '%s')\n", relPath, pattern)
-					}
-					if d.IsDir() {
-						return filepath.SkipDir // Skip the entire directory
-					}
-					return nil // Skip this file
-				}
-			}
-
-			targetPath := filepath.Join(l.TargetDir, relPath)
-
-			// If current item is a directory, ensure it exists in target and continue.
-			// Do not create symlinks *for* directories, only *within* them.
-			if d.IsDir() {
-				if l.Verbose {
-					fmt.Printf("Ensuring directory exists: %s\n", targetPath)
-				}
-				if !l.DryRun {
-					if err := os.MkdirAll(targetPath, 0755); err != nil {
-						return fmt.Errorf("failed to create target directory %s: %w", targetPath, err)
-					}
-				}
-				return nil // Directory handled, continue walk
-			}
-
-			targetFi, err := os.Lstat(targetPath)
+			// For files, check if target already exists
+			targetFi, err := os.Lstat(path.targetPath)
 			if err == nil {
 				// Target exists, check if it's a symlink to the correct source
 				if targetFi.Mode()&os.ModeSymlink != 0 {
-					linkTarget, readErr := os.Readlink(targetPath)
-					if readErr != nil {
-						return fmt.Errorf("failed to read existing symlink %s: %w", targetPath, readErr)
+					isCorrect, checkErr := isCorrectSymlink(path.targetPath, path.sourcePath)
+					if checkErr != nil {
+						return checkErr
 					}
-					// Important: Compare absolute paths for robustness
-					absSourcePath, absErr := filepath.Abs(sourcePath)
-					if absErr != nil {
-						return fmt.Errorf("failed to get absolute path for source %s: %w", sourcePath, absErr)
-					}
-					absLinkTarget, absErr := filepath.Abs(filepath.Join(filepath.Dir(targetPath), linkTarget))
-					if absErr != nil {
-						// Try absolute if linkTarget itself was absolute
-						absLinkTarget, absErr = filepath.Abs(linkTarget)
-						if absErr != nil {
-							return fmt.Errorf("failed to get absolute path for link target %s: %w", linkTarget, absErr)
-						}
-					}
-					if linkTarget == sourcePath || absLinkTarget == absSourcePath {
+
+					if isCorrect {
 						// Already correctly linked, skip
-						if l.Verbose {
-							fmt.Printf("Skipping already linked: %s -> %s\n", sourcePath, targetPath)
-						}
-						return nil
+						l.logVerbose("Skipping already linked: %s -> %s\n", path.sourcePath, path.targetPath)
+						continue
 					}
 				}
-				// Target exists but is not the correct symlink (or not a symlink at all)
-				return fmt.Errorf("conflict: target %s already exists and is not the expected symlink", targetPath)
+				// Target exists but is not the correct symlink
+				return fmt.Errorf("conflict: target %s already exists and is not the expected symlink", path.targetPath)
 			} else if !os.IsNotExist(err) {
 				// Error during Lstat other than file not existing
-				return fmt.Errorf("failed to stat target path %s: %w", targetPath, err)
+				return fmt.Errorf("failed to stat target path %s: %w", path.targetPath, err)
 			}
 
-			// Target does not exist, proceed with linking
-			fmt.Printf("Linking: %s -> %s\n", sourcePath, targetPath)
-
-			// In dry run mode, don't make actual changes
-			if l.DryRun {
-				return nil
+			// Create symlink
+			if err := l.createSymlink(path.sourcePath, path.targetPath); err != nil {
+				return fmt.Errorf("failed to create symlink from %s to %s: %w", path.sourcePath, path.targetPath, err)
 			}
-
-			// Ensure parent directory exists
-			targetDir := filepath.Dir(targetPath)
-			if err := os.MkdirAll(targetDir, 0755); err != nil {
-				return fmt.Errorf("failed to create target directory %s: %w", targetDir, err)
-			}
-
-			// Create the symbolic link
-			absSourcePath, absErr := filepath.Abs(sourcePath)
-			if absErr != nil {
-				return fmt.Errorf("failed to get absolute path for source %s: %w", sourcePath, absErr)
-			}
-			if err := os.Symlink(absSourcePath, targetPath); err != nil {
-				return fmt.Errorf("failed to create symlink from %s to %s: %w", absSourcePath, targetPath, err)
-			}
-
-			return nil // Continue walking
-		})
-
-		if err != nil {
-			// Error during walk for this package
-			return fmt.Errorf("failed to link package %s: %w", name, err)
 		}
 	}
 
-	return nil // Success
+	return nil
 }
 
 // Unlink removes symbolic links for the specified packages from the TargetDir
@@ -305,8 +358,6 @@ func (l *Linker) Link(packageNames []string) error {
 func (l *Linker) Unlink(packageNames []string) error {
 	allPackages, err := l.FindPackages()
 	if err != nil {
-		// Allow unlinking even if source dir has issues, maybe?
-		// For now, let's require source to be readable to know *what* to unlink.
 		return fmt.Errorf("failed to find packages: %w", err)
 	}
 
@@ -318,133 +369,117 @@ func (l *Linker) Unlink(packageNames []string) error {
 	for _, name := range packageNames {
 		pkg, ok := packagesToUnlink[name]
 		if !ok {
-			// If package doesn't exist in source, we can't know what to unlink.
 			return fmt.Errorf("package '%s' not found in source directory %s, cannot determine links to remove", name, l.SourceDir)
 		}
 
 		// Load ignore patterns for this package
 		ignorePatterns, err := loadIgnorePatterns(pkg.Path)
 		if err != nil {
-			// If we can't load ignores, we might remove files that shouldn't be linked.
-			// Let's return an error to be safe.
 			return fmt.Errorf("failed to load ignore patterns for package %s: %w", name, err)
 		}
 
-		if l.Verbose {
-			fmt.Printf("Loaded %d ignore patterns for package %s for unlinking\n", len(ignorePatterns), name)
+		l.logVerbose("Loaded %d ignore patterns for package %s for unlinking\n", len(ignorePatterns), name)
+
+		// Process all paths in the package
+		paths, err := l.processPackagePaths(pkg, ignorePatterns)
+		if err != nil {
+			return fmt.Errorf("failed to process paths for package %s: %w", name, err)
 		}
 
-		// We need to walk the source package dir to know what links *should* exist
-		err = filepath.WalkDir(pkg.Path, func(sourcePath string, d os.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return fmt.Errorf("error accessing %s: %w", sourcePath, walkErr)
+		// Handle each path that is not a directory
+		for _, path := range paths {
+			if path.isDir {
+				continue // Skip directories during unlinking
 			}
 
-			// Skip the root package directory itself and the ignore file
-			if sourcePath == pkg.Path || filepath.Base(sourcePath) == ".gslk-ignore" {
-				return nil
-			}
-
-			relPath, err := filepath.Rel(pkg.Path, sourcePath)
-			if err != nil {
-				return fmt.Errorf("failed to get relative path for %s: %w", sourcePath, err)
-			}
-
-			// Check against ignore patterns - if it *would* be ignored during linking, don't try to unlink it
-			for _, pattern := range ignorePatterns {
-				// Check against the full relative path first
-				matched, matchErr := filepath.Match(pattern, relPath)
-				if matchErr != nil {
-					fmt.Printf("Warning: Invalid pattern '%s' in .gslk-ignore for package %s during unlink: %v\n", pattern, name, matchErr)
-					continue
-				}
-
-				// If not matched and pattern doesn't contain a separator, try matching basename
-				if !matched && !strings.Contains(pattern, string(filepath.Separator)) {
-					baseName := filepath.Base(relPath)
-					matched, matchErr = filepath.Match(pattern, baseName)
-					if matchErr != nil {
-						fmt.Printf("Warning: Error matching pattern '%s' against base name '%s' during unlink: %v\n", pattern, baseName, matchErr)
-						continue
-					}
-				}
-
-				if matched {
-					// This path would have been ignored during linking, so don't process for unlinking
-					if l.Verbose {
-						fmt.Printf("Ignoring %s during unlink (matches pattern '%s')\n", relPath, pattern)
-					}
-					if d.IsDir() {
-						return filepath.SkipDir
-					}
-					return nil
-				}
-			}
-
-			targetPath := filepath.Join(l.TargetDir, relPath)
-
-			targetFi, err := os.Lstat(targetPath)
+			targetFi, err := os.Lstat(path.targetPath)
 			if err != nil {
 				if os.IsNotExist(err) {
-					// Target doesn't exist, nothing to unlink for this path
-					return nil
+					// Target doesn't exist, nothing to unlink
+					continue
 				}
 				// Other error stat-ing target
-				return fmt.Errorf("failed to stat target path %s: %w", targetPath, err)
+				return fmt.Errorf("failed to stat target path %s: %w", path.targetPath, err)
 			}
 
 			// Target exists, check if it's a symlink pointing to our source
 			if targetFi.Mode()&os.ModeSymlink != 0 {
-				linkTarget, readErr := os.Readlink(targetPath)
-				if readErr != nil {
-					// Error reading link, maybe log this? For now, return error.
-					return fmt.Errorf("failed to read symlink %s: %w", targetPath, readErr)
+				isCorrect, checkErr := isCorrectSymlink(path.targetPath, path.sourcePath)
+				if checkErr != nil {
+					return checkErr
 				}
 
-				absSourcePath, absErr := filepath.Abs(sourcePath)
-				if absErr != nil {
-					return fmt.Errorf("failed to get absolute path for source %s: %w", sourcePath, absErr)
-				}
-				// Assume linkTarget is absolute as created by Link
-				absLinkTarget, absErr := filepath.Abs(linkTarget)
-				if absErr != nil {
-					return fmt.Errorf("failed to get absolute path for link target %s: %w", linkTarget, absErr)
-				}
-
-				if absLinkTarget == absSourcePath {
+				if isCorrect {
 					// This is the link we created, remove it
-					fmt.Printf("Unlinking: %s (link to %s)\n", targetPath, sourcePath)
+					fmt.Printf("Unlinking: %s (link to %s)\n", path.targetPath, path.sourcePath)
 
 					// In dry run mode, don't make actual changes
 					if l.DryRun {
-						return nil
+						continue
 					}
 
-					removeErr := os.Remove(targetPath)
-					if removeErr != nil && !os.IsNotExist(removeErr) { // Ignore error if it was already gone
-						return fmt.Errorf("failed to remove symlink %s: %w", targetPath, removeErr)
+					removeErr := os.Remove(path.targetPath)
+					if removeErr != nil && !os.IsNotExist(removeErr) {
+						return fmt.Errorf("failed to remove symlink %s: %w", path.targetPath, removeErr)
 					}
 
-					// Attempt to remove empty parent directories, starting from the parent of the removed link
-					if !l.DryRun {
-						removeParents(targetPath, l.TargetDir, l.ForceRemove)
-					}
+					// Attempt to remove empty parent directories
+					removeParents(path.targetPath, l.TargetDir, l.ForceRemove)
 				} else if l.Verbose {
-					// Symlink exists but points elsewhere, ignore it.
-					fmt.Printf("Skipping unlink for %s: symlink points to %s, expected %s\n", targetPath, absLinkTarget, absSourcePath)
+					// Symlink exists but points elsewhere
+					fmt.Printf("Skipping unlink for %s: symlink points elsewhere\n", path.targetPath)
 				}
 			} else if l.Verbose {
-				// Target exists but is not a symlink, ignore it.
-				fmt.Printf("Skipping unlink for %s: not a symlink\n", targetPath)
+				// Target exists but is not a symlink
+				fmt.Printf("Skipping unlink for %s: not a symlink\n", path.targetPath)
 			}
-
-			return nil // Continue walking
-		})
-
-		if err != nil {
-			return fmt.Errorf("failed to unlink package %s: %w", name, err)
 		}
 	}
 
-	return nil // Success
+	// Verification pass if not in dry run mode
+	if !l.DryRun {
+		err = l.verifyUnlink(packageNames, packagesToUnlink)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// verifyUnlink performs a verification pass to ensure no lingering links exist
+func (l *Linker) verifyUnlink(packageNames []string, packagesToUnlink map[string]Package) error {
+	for _, name := range packageNames {
+		pkg, ok := packagesToUnlink[name]
+		if !ok {
+			continue // We've already checked this earlier
+		}
+
+		// Load ignore patterns again for verification
+		ignorePatterns, err := loadIgnorePatterns(pkg.Path)
+		if err != nil {
+			return fmt.Errorf("failed to load ignore patterns for package %s during verification: %w", name, err)
+		}
+
+		// Process all paths for verification
+		paths, err := l.processPackagePaths(pkg, ignorePatterns)
+		if err != nil {
+			return fmt.Errorf("failed to process paths for package %s during verification: %w", name, err)
+		}
+
+		// Check each file (not directory)
+		for _, path := range paths {
+			if !path.isDir {
+				targetFi, err := os.Lstat(path.targetPath)
+				if err == nil && targetFi.Mode()&os.ModeSymlink != 0 {
+					// Link still exists, check if it points to our source
+					isCorrect, _ := isCorrectSymlink(path.targetPath, path.sourcePath)
+					if isCorrect {
+						return fmt.Errorf("symbolic link %s still exists after unlink operation", path.targetPath)
+					}
+				}
+			}
+		}
+	}
+	return nil
 }

@@ -6,6 +6,7 @@ gslk - Go Symlink
 
 *   Links files from source package directories to a target directory.
 *   Unlinks previously created symlinks.
+*   Verifies all symbolic links are properly removed during unlink operations.
 *   Detects and prevents overwriting existing files/directories in the target location (unless they are the correct symlink).
 *   Supports ignoring specific files or patterns within packages via a `.gslk-ignore` file.
 
@@ -68,6 +69,7 @@ To unlink the `vim` package:
 ```bash
 gslk -D -s ./dotfiles vim
 ```
+This will unlink the package and perform verification to ensure all symbolic links are properly removed.
 
 To force remove parent directories when unlinking:
 ```bash
